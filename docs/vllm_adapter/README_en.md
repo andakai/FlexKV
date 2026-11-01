@@ -183,9 +183,15 @@ Both local and client/server matching carry H. A client rejects H>0 when the
 server's readiness response does not advertise `lookahead_hashes_v1`. Deploy the
 paired client and server before enabling lookahead in the vLLM connector.
 Legacy prefetch graphs are not inherited by lookahead GETs.
+Both prefetch APIs accept H as well: `prefetch_async` takes it directly, while
+`start_prefetch` takes `PrefetchOptions(num_hash_lookahead_tokens=H)`. Legacy RPC
+prefetch requires `lookahead_prefetch_v1`; chunked prefetch reports
+`PrefetchCapabilities.lookahead_hashes`. Prefetch pins retain the hash context
+without counting it as loaded KV.
 
 The vLLM adapter also isolates model/draft/cache configurations and includes draft
 layers in the host allocation. Its initial lookahead path requires one resolved
 KV cache group and pipeline parallel size 1. Prompt-embedding requests bypass
-external reuse. Full runtime qualification and the vLLM capability opt-in are
+external reuse. Finish-time stores are bounded by completed tokens, available
+blocks and hash context. Full runtime qualification and the vLLM capability opt-in are
 still pending; this protocol addition alone is not a support declaration.

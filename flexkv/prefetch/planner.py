@@ -196,7 +196,7 @@ class MooncakeChunkPlanner:
     ) -> bool:
         cpu = self.cache.cpu_cache_engine
         prefix = copy(context.sequence)
-        prefix.token_ids = prefix.token_ids[:end]
+        prefix.token_ids = prefix.token_ids[:end + prefix.num_hash_lookahead_tokens]
         prefix.block_hashes = prefix.block_hashes[: end // self.block_size]
         local = cpu.match(prefix)
         if int(local.num_matched_blocks) * self.block_size != end:

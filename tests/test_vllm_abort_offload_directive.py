@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from vllm.v1.engine import FinishReason
 
 from flexkv.integration.vllm.vllm_v1_adapter import FlexKVSchedulerConnector
@@ -65,6 +67,27 @@ def test_normal_finish_remains_eligible_for_put():
     assert delayed is False
     connector._put_match.assert_called_once()
     connector.flexkv_stats.record_put.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "lookahead,computed,in_flight,stale,expected",
+    [(1, 32, 0, 0, 32), (3, 32, 0, 0, 16),
+     (1, 32, 1, 0, 16), (1, 32, 17, 16, 16)],
+)
+def test_lookahead_finish_saves_only_complete_kv_with_hash_context(
+    lookahead, computed, in_flight, stale, expected
+):
+    connector = _connector()
+    connector.num_hash_lookahead_tokens = lookahead
+    request = _request(FinishReason.ABORT, offload=True)
+    request.num_tokens = 33
+    request.num_computed_tokens = computed
+    request.num_in_flight_tokens = in_flight
+    request.num_stale_output_tokens = stale
+    connector.request_finished(request, [0, 1, 2])
+    connector._put_match.assert_called_once_with(
+        request=request, num_tokens_to_put=expected,
+    )
 
 
 def test_abort_with_no_computed_blocks_skips_put():

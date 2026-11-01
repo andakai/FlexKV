@@ -574,6 +574,15 @@ class FlexKVSchedulerConnector:
         # waiting on a remote-KV load, so it is not a valid upper bound for a
         # GPU-to-host transfer.
         max_backed_tokens = len(block_ids) * self.block_size
+        if self.num_hash_lookahead_tokens:
+            in_flight_tokens = (
+                request.num_in_flight_tokens - request.num_stale_output_tokens
+            )
+            completed_tokens = max(0, request.num_computed_tokens - in_flight_tokens)
+            max_backed_tokens = min(
+                max_backed_tokens,
+                completed_tokens // self.block_size * self.block_size,
+            )
         num_tokens_to_put = min(
             ((max(0, request.num_tokens - max(1, self.num_hash_lookahead_tokens)))
              // self.block_size) * self.block_size,
