@@ -1261,6 +1261,8 @@ class FlexKVWorkerConnector:
             self.remote_transfer_manager_process = None
 
 class FlexKVConnectorV1Impl:
+    LOOKAHEAD_HASHES_VERSION = 1
+
     def __init__(self, vllm_config: "VllmConfig", role: "KVConnectorRole",
                  kv_cache_config: Optional["KVCacheConfig"] = None):
         self.role = role
