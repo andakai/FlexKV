@@ -84,6 +84,7 @@ def test_server_reports_ready():
     assert response.is_ready is True
     assert response.error_msg is None
     assert "lookahead_hashes_v1" in response.capabilities
+    assert "lookahead_prefetch_v1" in response.capabilities
 
 
 def test_server_reports_not_ready_without_error():
@@ -131,6 +132,20 @@ def test_client_sends_its_own_id():
     (req,) = client.send_to_server.sent
     assert isinstance(req, IsReadyRequest)
     assert req.dp_client_id == 3
+
+
+@pytest.mark.parametrize("capabilities", [(), ("lookahead_hashes_v1",)])
+def test_lookahead_prefetch_rejects_server_without_prefetch_support(capabilities):
+    import numpy as np
+
+    client = _FakeClient(Response(dp_client_id=3, is_ready=True,
+                                  capabilities=capabilities))
+    client.is_ready()
+    client.send_to_server.sent.clear()
+    with pytest.raises(RuntimeError, match="does not support lookahead prefetch"):
+        KVDPClient.prefetch_async(client, np.arange(17, dtype=np.int64),
+                                 num_hash_lookahead_tokens=1)
+    assert not client.send_to_server.sent
 
 
 def test_client_raises_on_server_error():

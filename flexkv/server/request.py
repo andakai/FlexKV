@@ -96,6 +96,7 @@ class PrefetchRequest:
     namespace: Optional[List[str]] = None
     # Joint Full+SWA prefetch (mooncake): plan SWA REMOTE2H alongside Full.
     swa_aware: bool = False
+    num_hash_lookahead_tokens: int = 0
 
 
 @dataclass

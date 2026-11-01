@@ -119,11 +119,13 @@ def test_byte_budgets_still_bound_block_sized_chunks(
     assert env.c.reserved_bytes == expected * env.planner.block_bytes
 
 
-def test_real_data_chunk_hash_offsets_and_invisible_staging(env):
-    h = start(env)
+@pytest.mark.parametrize("lookahead", [0, 1, 3, 5])
+def test_real_data_chunk_hash_offsets_and_invisible_staging(env, lookahead):
+    env.tokens = np.arange(40 + lookahead, dtype=np.int64)
+    h = start(env, num_hash_lookahead_tokens=lookahead)
     env.c.tick()
     assert len(env.sent) == 2
-    seq = SequenceMeta(env.tokens, 4)
+    seq = SequenceMeta(env.tokens, 4, num_hash_lookahead_tokens=lookahead)
     assert env.cpu.match(seq).num_matched_blocks == 0
     np.testing.assert_array_equal(
         next(iter(env.sent[1]._op_map.values())).mooncake_store_block_hashes,
@@ -152,6 +154,11 @@ def test_real_data_chunk_hash_offsets_and_invisible_staging(env):
     )
     np.testing.assert_array_equal(env.data[match.physical_blocks], expected)
     assert env.cpu.mempool.num_used_blocks == 10
+    if lookahead:
+        changed = env.tokens.copy()
+        changed[4 + lookahead - 1] += 1000
+        other = SequenceMeta(changed, 4, num_hash_lookahead_tokens=lookahead)
+        assert env.cpu.match(other).num_matched_blocks == 0
 
 
 @pytest.mark.parametrize(

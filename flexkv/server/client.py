@@ -199,12 +199,16 @@ class KVDPClient:
         token_ids: np.ndarray,
         namespace: Optional[List[str]] = None,
         swa_aware: bool = False,
+        num_hash_lookahead_tokens: int = 0,
     ) -> int:
+        if num_hash_lookahead_tokens and "lookahead_prefetch_v1" not in getattr(self, "server_capabilities", ()):
+            raise RuntimeError("FlexKV server does not support lookahead prefetch; upgrade the server")
         req = PrefetchRequest(
             dp_client_id=self.dp_client_id,
             token_ids=token_ids,
             task_id=self._get_task_id(),
             namespace=namespace,
+            num_hash_lookahead_tokens=num_hash_lookahead_tokens,
             swa_aware=swa_aware,
         )
         self.send_to_server.send_pyobj(req)

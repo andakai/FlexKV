@@ -20,7 +20,8 @@ def _get_namespace_hash_key(namespace: Optional[List[str]]) -> Optional[np.ndarr
     return namespace_array
 
 
-def hash_token(token_ids: np.ndarray, namespace: Optional[List[str]]) -> HashType:
+def hash_token(token_ids: np.ndarray, namespace: Optional[List[str]],
+               num_hash_lookahead_tokens: int = 0) -> HashType:
     hasher = Hasher()
     hasher.reset()
 
@@ -29,6 +30,8 @@ def hash_token(token_ids: np.ndarray, namespace: Optional[List[str]]) -> HashTyp
         if namespace_key is not None:
             hasher.update(namespace_key)
 
+    if num_hash_lookahead_tokens:
+        hasher.update(np.array([-1, 1, num_hash_lookahead_tokens], dtype=np.int64))
     hasher.update(token_ids)
 
     return HashType(hasher.digest())

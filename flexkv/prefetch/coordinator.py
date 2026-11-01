@@ -95,7 +95,7 @@ class PrefetchCoordinator:
         self._next_id += 1
         now = self.clock()
         context = self.backend.begin(tokens, namespace, client_id, options)
-        n = max(0, len(tokens) - options.candidate_start_token)
+        n = max(0, len(tokens) - options.num_hash_lookahead_tokens - options.candidate_start_token)
         deadline = now + options.budget(n) if options.policy == "timeout" else None
         self.sessions[handle] = Session(handle, options, now, deadline, context)
         return handle

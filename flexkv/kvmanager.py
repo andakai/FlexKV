@@ -328,7 +328,9 @@ class KVManager:
     def prefetch_async(self,
                        token_ids: np.ndarray,
                        namespace: Optional[List[str]] = None,
-                       swa_aware: bool = False) -> int:
+                       swa_aware: bool = False,
+                       num_hash_lookahead_tokens: int = 0,
+                       ) -> int:
         """Launch prefetch; return the task_id.
 
         The prefetch is fire-and-forget at launch time. Callers poll progress
@@ -346,12 +348,14 @@ class KVManager:
             token_ids = token_ids.numpy()
         if self.server_client_mode:
             task_id = self.dp_client.prefetch_async(
-                token_ids, namespace=namespace, swa_aware=swa_aware)
+                token_ids, namespace=namespace,
+                num_hash_lookahead_tokens=num_hash_lookahead_tokens, swa_aware=swa_aware)
         else:
             task_id = self.kv_task_engine.prefetch_async(
                 token_ids,
                 dp_client_id=self.dp_client_id,
                 namespace=namespace,
+                num_hash_lookahead_tokens=num_hash_lookahead_tokens,
                 swa_aware=swa_aware,
             )
         return task_id
@@ -367,6 +371,9 @@ class KVManager:
     ) -> PrefetchHandle:
         if isinstance(token_ids, torch.Tensor):
             token_ids = token_ids.numpy()
+        if (options is not None and options.num_hash_lookahead_tokens
+                and not self.prefetch_capabilities().lookahead_hashes):
+            raise RuntimeError("FlexKV server does not support lookahead prefetch; upgrade the server")
         if self.server_client_mode:
             return self.dp_client.prefetch_control(
                 "start", token_ids=token_ids, options=options, namespace=namespace)

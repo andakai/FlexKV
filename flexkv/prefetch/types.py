@@ -26,11 +26,16 @@ class PrefetchOptions:
     timeout_budget_s: Optional[float] = None
     candidate_start_token: int = 0
     swa_aware: bool = False
+    num_hash_lookahead_tokens: int = 0
 
     def validate(self) -> None:
         from .policy import get_policy
 
         get_policy(self.policy)
+        if (isinstance(self.num_hash_lookahead_tokens, bool)
+                or not isinstance(self.num_hash_lookahead_tokens, int)
+                or self.num_hash_lookahead_tokens < 0):
+            raise ValueError("num_hash_lookahead_tokens must be a nonnegative integer")
         for name in ("chunk_max_blocks", "max_inflight_chunks"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -97,3 +102,4 @@ class PrefetchCapabilities:
     stop_and_drain: bool = True
     partial_dense: bool = True
     partial_swa_checkpoints: bool = False
+    lookahead_hashes: bool = False

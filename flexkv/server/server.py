@@ -410,7 +410,7 @@ class KVServer:
             is_ready = False
             error_msg = str(e)
         response = Response(dp_client_id=req.dp_client_id, is_ready=is_ready, error_msg=error_msg,
-                            capabilities=("lookahead_hashes_v1",))
+                            capabilities=("lookahead_hashes_v1", "lookahead_prefetch_v1"))
         result_zmq = self.client_manager.get_zmq(req.dp_client_id)
         result_zmq.send_pyobj(response)
 
@@ -475,6 +475,7 @@ class KVServer:
             dp_client_id=req.dp_client_id,
             task_id=req.task_id,
             namespace=req.namespace,
+            num_hash_lookahead_tokens=req.num_hash_lookahead_tokens,
             swa_aware=req.swa_aware,
         )
 

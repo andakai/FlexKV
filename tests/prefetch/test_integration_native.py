@@ -254,7 +254,7 @@ def test_real_zmq_control_is_independent_of_pending_legacy_wait(engine, tmp_path
         )
         before = time.monotonic()
         assert client.prefetch_control("capabilities") == PrefetchCapabilities(
-            partial_swa_checkpoints=True
+            partial_swa_checkpoints=True, lookahead_hashes=True
         )
         assert time.monotonic() - before < 2
         assert server._pending_waits and not legacy_responses
