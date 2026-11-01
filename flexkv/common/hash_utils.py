@@ -39,13 +39,24 @@ def hash_array_with_prefix(array: np.ndarray, prefix: int) -> HashType:
     _HASHER.update(array)
     return HashType(_HASHER.digest())
 
-def gen_hashes(token_ids: np.ndarray, tokens_per_block: int, hasher: Optional[Hasher] = None) -> np.ndarray:
+def gen_hashes(token_ids: np.ndarray, tokens_per_block: int, hasher: Optional[Hasher] = None,
+               num_hash_lookahead_tokens: int = 0) -> np.ndarray:
+    """Hash complete KV blocks together with their subsequent token context."""
     token_ids = np.ascontiguousarray(token_ids)
     if token_ids.dtype != np.int64:
         raise TypeError(f"gen_hashes: token_ids must be int64, got {token_ids.dtype}")
-    block_hashes = np.zeros(token_ids.size // tokens_per_block, dtype=np.uint64)
+    if num_hash_lookahead_tokens < 0:
+        raise ValueError("num_hash_lookahead_tokens must be nonnegative")
+    if tokens_per_block <= 0:
+        raise ValueError("tokens_per_block must be positive")
     if hasher is None:
         hasher = Hasher()
+    if num_hash_lookahead_tokens:
+        # Version and geometry separate these keys from the legacy token chain.
+        hasher.update(np.array([-1, 1, tokens_per_block, num_hash_lookahead_tokens], dtype=np.int64))
+        hasher.update(token_ids[:num_hash_lookahead_tokens])
+        token_ids = token_ids[num_hash_lookahead_tokens:]
+    block_hashes = np.zeros(token_ids.size // tokens_per_block, dtype=np.uint64)
     c_ext.gen_hashes_numpy(hasher.hasher, token_ids, tokens_per_block, block_hashes)
     return block_hashes
 

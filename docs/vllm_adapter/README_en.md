@@ -171,3 +171,21 @@ bash benchmarks/flexkv_benchmark/serving_vllm.sh
 bash benchmarks/flexkv_benchmark/multiturn_benchmark.sh
 ```
 Apply the patch `examples/vllm_adaption_legacy/flexkv_vllm_0_10_0.patch` to vLLM 0.10.0, and use the same testing method as above.
+
+### Lookahead hash protocol (development)
+
+The matching API accepts `num_hash_lookahead_tokens=H`. Token arrays retain the
+context through the last transferable block plus H tokens; the mask marks only
+KV positions for transfer. Hashes cover each prefix through its block end plus H,
+with a separate version/H/block-size domain. H=0 preserves legacy hashes.
+
+Both local and client/server matching carry H. A client rejects H>0 when the
+server's readiness response does not advertise `lookahead_hashes_v1`. Deploy the
+paired client and server before enabling lookahead in the vLLM connector.
+Legacy prefetch graphs are not inherited by lookahead GETs.
+
+The vLLM adapter also isolates model/draft/cache configurations and includes draft
+layers in the host allocation. Its initial lookahead path requires one resolved
+KV cache group and pipeline parallel size 1. Prompt-embedding requests bypass
+external reuse. Full runtime qualification and the vLLM capability opt-in are
+still pending; this protocol addition alone is not a support declaration.

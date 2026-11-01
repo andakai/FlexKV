@@ -244,6 +244,7 @@ class KVManager:
                   cpu_only: bool = False,
                   namespace: Optional[List[str]] = None,
                   swa_aware: bool = False,
+                  num_hash_lookahead_tokens: int = 0,
                   ) -> Tuple[int, np.ndarray]:
         """Match a prefix and build the load graph; return (task_id, mask).
 
@@ -261,6 +262,7 @@ class KVManager:
                                                      token_mask,
                                                      cpu_only=cpu_only,
                                                      namespace=namespace,
+                                                     num_hash_lookahead_tokens=num_hash_lookahead_tokens,
                                                      swa_aware=swa_aware)
         else:
             task_id, mask = self.kv_task_engine.get_match(
@@ -269,6 +271,7 @@ class KVManager:
                 cpu_only=cpu_only,
                 dp_client_id=self.dp_client_id,
                 namespace=namespace,
+                num_hash_lookahead_tokens=num_hash_lookahead_tokens,
                 swa_aware=swa_aware,
             )
         return task_id, mask
@@ -302,6 +305,7 @@ class KVManager:
                   token_ids: Union[torch.Tensor, np.ndarray],
                   token_mask: Optional[Union[torch.Tensor, np.ndarray]] = None,
                   namespace: Optional[List[str]] = None,
+                  num_hash_lookahead_tokens: int = 0,
                   ) -> Tuple[int, np.ndarray]:
         if isinstance(token_ids, torch.Tensor):
             token_ids = token_ids.numpy()
@@ -309,13 +313,15 @@ class KVManager:
             token_mask = token_mask.numpy()
         if self.server_client_mode:
             task_id, mask = self.dp_client.put_match(token_ids, token_mask,
-                                                     namespace=namespace)
+                                                     namespace=namespace,
+                                                     num_hash_lookahead_tokens=num_hash_lookahead_tokens)
         else:
             task_id, mask = self.kv_task_engine.put_match(
                 token_ids=token_ids,
                 token_mask=token_mask,
                 dp_client_id=self.dp_client_id,
                 namespace=namespace,
+                num_hash_lookahead_tokens=num_hash_lookahead_tokens,
             )
         return task_id, mask
 

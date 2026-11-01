@@ -105,6 +105,7 @@ class PutMatchRequest:
     token_mask: Optional[np.ndarray]
     task_id: int = -1
     namespace: Optional[List[str]] = None
+    num_hash_lookahead_tokens: int = 0
 
 
 @dataclass
@@ -118,6 +119,7 @@ class GetMatchRequest:
     # SWA-aware match: clamp the Full-KV transfer to the reusable SWA window; the
     # SWA window is the trailing block of the returned mask.
     swa_aware: bool = False
+    num_hash_lookahead_tokens: int = 0
 
 
 
@@ -162,6 +164,7 @@ class Response:
     status: Optional[Dict[int, KVResponseStatus]] = None
     is_ready: bool = False
     error_msg: Optional[str] = None
+    capabilities: tuple[str, ...] = ()
 
     @property
     def success(self) -> bool:

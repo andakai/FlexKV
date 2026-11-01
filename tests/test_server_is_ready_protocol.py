@@ -83,6 +83,7 @@ def test_server_reports_ready():
     assert response.dp_client_id == 3
     assert response.is_ready is True
     assert response.error_msg is None
+    assert "lookahead_hashes_v1" in response.capabilities
 
 
 def test_server_reports_not_ready_without_error():
@@ -110,6 +111,18 @@ def test_server_always_replies_when_is_ready_raises():
 def test_client_returns_ready_flag():
     assert _FakeClient(Response(dp_client_id=3, is_ready=True)).is_ready() is True
     assert _FakeClient(Response(dp_client_id=3, is_ready=False)).is_ready() is False
+
+
+def test_old_server_response_does_not_advertise_lookahead():
+    import pickle
+
+    response = Response(dp_client_id=3, is_ready=True)
+    # Old pickled responses have no field. The new class default must not
+    # accidentally promise a capability that the old server never implemented.
+    del response.capabilities
+    client = _FakeClient(pickle.loads(pickle.dumps(response)))
+    assert client.is_ready()
+    assert "lookahead_hashes_v1" not in client.server_capabilities
 
 
 def test_client_sends_its_own_id():

@@ -11,6 +11,7 @@ def _connector() -> FlexKVSchedulerConnector:
     connector.req_id_to_task_dict = {}
     connector.maybe_skip_put = False
     connector.block_size = 16
+    connector.num_hash_lookahead_tokens = 0
     connector.flexkv_stats = Mock()
     connector._put_match = Mock(return_value=(-1, 0, 0))
     return connector

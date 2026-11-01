@@ -134,6 +134,7 @@ class KVDPClient:
         response: Response = self.recv_from_server.recv_pyobj()
         if response.error_msg:
             raise RuntimeError(f"flexkv server failed to become ready: {response.error_msg}")
+        self.server_capabilities = response.capabilities
         return response.is_ready
 
     def reset(self) -> None:
@@ -173,13 +174,17 @@ class KVDPClient:
         token_ids: np.ndarray,
         token_mask: Optional[np.ndarray],
         namespace: Optional[List[str]] = None,
+        num_hash_lookahead_tokens: int = 0,
     ) -> Optional[Tuple[int, np.ndarray]]:
+        if num_hash_lookahead_tokens and "lookahead_hashes_v1" not in getattr(self, "server_capabilities", ()):
+            raise RuntimeError("FlexKV server does not support lookahead hashes; upgrade the server")
         req = PutMatchRequest(
             dp_client_id=self.dp_client_id,
             token_ids=token_ids,
             token_mask=token_mask if token_mask is not None else None,
             task_id=self._get_task_id(),
             namespace=namespace,
+            num_hash_lookahead_tokens=num_hash_lookahead_tokens,
         )
         self.send_to_server.send_pyobj(req)
         response: Response = self.recv_from_server.recv_pyobj()
@@ -230,7 +235,10 @@ class KVDPClient:
         cpu_only: bool = False,
         namespace: Optional[List[str]] = None,
         swa_aware: bool = False,
+        num_hash_lookahead_tokens: int = 0,
     ) -> Optional[Tuple[int, np.ndarray]]:
+        if num_hash_lookahead_tokens and "lookahead_hashes_v1" not in getattr(self, "server_capabilities", ()):
+            raise RuntimeError("FlexKV server does not support lookahead hashes; upgrade the server")
         req = GetMatchRequest(
             dp_client_id=self.dp_client_id,
             token_ids=token_ids,
@@ -238,6 +246,7 @@ class KVDPClient:
             cpu_only=cpu_only,
             task_id=self._get_task_id(),
             namespace=namespace,
+            num_hash_lookahead_tokens=num_hash_lookahead_tokens,
             swa_aware=swa_aware,
         )
         self.send_to_server.send_pyobj(req)

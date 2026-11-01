@@ -409,7 +409,8 @@ class KVServer:
             flexkv_logger.error(f"is_ready check failed: {e}", exc_info=True)
             is_ready = False
             error_msg = str(e)
-        response = Response(dp_client_id=req.dp_client_id, is_ready=is_ready, error_msg=error_msg)
+        response = Response(dp_client_id=req.dp_client_id, is_ready=is_ready, error_msg=error_msg,
+                            capabilities=("lookahead_hashes_v1",))
         result_zmq = self.client_manager.get_zmq(req.dp_client_id)
         result_zmq.send_pyobj(response)
 
@@ -444,6 +445,7 @@ class KVServer:
             cpu_only=req.cpu_only,
             task_id=req.task_id,
             namespace=req.namespace,
+            num_hash_lookahead_tokens=req.num_hash_lookahead_tokens,
             swa_aware=req.swa_aware,
         )
         response = Response(dp_client_id=req.dp_client_id,
@@ -459,6 +461,7 @@ class KVServer:
             dp_client_id=req.dp_client_id,
             task_id=req.task_id,
             namespace=req.namespace,
+            num_hash_lookahead_tokens=req.num_hash_lookahead_tokens,
         )
         response = Response(dp_client_id=req.dp_client_id,
                             task_id=req_id, mask=mask)
