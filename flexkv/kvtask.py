@@ -239,7 +239,7 @@ class KVTaskManager:
 
         # hash(token_ids) -> task_id
         self.prefetch_tasks: Dict[int, int] = {}  # removed with the owning task
-        self._gen_prefetch_key = lambda token_ids, namespace: hash_token(token_ids, namespace)
+        self._gen_prefetch_key = hash_token
 
         self.graph_to_task: Dict[int, int] = {}
 
@@ -397,10 +397,11 @@ class KVTaskManager:
                         temp_cache_strategy: CacheStrategy = DEFAULT_CACHE_STRATEGY,
                         namespace: Optional[List[str]] = None,
                         swa_aware: bool = False,
+                        num_hash_lookahead_tokens: int = 0,
                         ) -> None:
         if task_id in self.tasks:
             raise ValueError(f"Task ID {task_id} already exists")
-        prefetch_task = None if swa_aware else self._inflight_prefetch_task(
+        prefetch_task = None if swa_aware or num_hash_lookahead_tokens else self._inflight_prefetch_task(
             token_ids, namespace)
         if prefetch_task is not None:
             self._create_inherited_get_task(
@@ -415,6 +416,7 @@ class KVTaskManager:
             dp_client_id=dp_client_id,
             temp_cache_strategy=temp_cache_strategy,
             namespace=namespace,
+            num_hash_lookahead_tokens=num_hash_lookahead_tokens,
             swa_aware=swa_aware)
         self.tasks[task_id] = KVTask(
             task_id=task_id,
@@ -441,6 +443,7 @@ class KVTaskManager:
                         token_mask: Optional[np.ndarray] = None,
                         is_fake_slot_mapping: bool = False,
                         namespace: Optional[List[str]] = None,
+                        num_hash_lookahead_tokens: int = 0,
                         ) -> None:
         if task_id in self.tasks:
             raise ValueError(f"Task ID {task_id} already exists")
@@ -450,7 +453,8 @@ class KVTaskManager:
             token_mask=token_mask,
             slot_mapping=slot_mapping,
             dp_client_id=dp_client_id,
-            namespace=namespace)
+            namespace=namespace,
+            num_hash_lookahead_tokens=num_hash_lookahead_tokens)
         self.tasks[task_id] = KVTask(
             task_id=task_id,
             task_type=TaskType.PUT,
@@ -473,11 +477,14 @@ class KVTaskManager:
                             dp_client_id: int,
                             namespace: Optional[List[str]] = None,
                             swa_aware: bool = False,
+                            num_hash_lookahead_tokens: int = 0,
                             ) -> None:
         if task_id in self.tasks:
             raise ValueError(f"Task ID {task_id} already exists")
-        fake_slot_mapping = np.zeros_like(token_ids)
-        fake_token_mask = np.ones_like(token_ids)
+        kv_length = max(0, len(token_ids) - num_hash_lookahead_tokens)
+        fake_token_mask = np.zeros_like(token_ids, dtype=bool)
+        fake_token_mask[:kv_length] = True
+        fake_slot_mapping = np.zeros(kv_length, dtype=np.int64)
         temp_cache_strategy = copy.deepcopy(DEFAULT_CACHE_STRATEGY)
         temp_cache_strategy.ignore_gpu = True  # upload to CPU only
         temp_cache_strategy.ignore_gds = True
@@ -489,6 +496,7 @@ class KVTaskManager:
             dp_client_id=dp_client_id,
             temp_cache_strategy=temp_cache_strategy,
             namespace=namespace,
+            num_hash_lookahead_tokens=num_hash_lookahead_tokens,
             swa_aware=swa_aware)
         prefetch_has_swa_remote = any(
             op.transfer_type == TransferType.REMOTE2H and getattr(op, "is_swa", False)
@@ -518,7 +526,7 @@ class KVTaskManager:
             task.prefetch_planned_hit_blocks = int(callback.prefetch_planned_hit_blocks)
             self.prefetch_jobs[task_id] = job
 
-        key = self._gen_prefetch_key(token_ids, namespace)
+        key = self._gen_prefetch_key(token_ids, namespace, num_hash_lookahead_tokens)
         self.tasks[task_id].prefetch_key = key
         self.prefetch_tasks[key] = task_id
 
@@ -1257,7 +1265,7 @@ class KVTaskEngine(KVTaskManager):
     def prefetch_capabilities(self) -> PrefetchCapabilities:
         if not hasattr(self, "_prefetch"):
             raise RuntimeError("chunked prefetch is not enabled")
-        return PrefetchCapabilities(partial_swa_checkpoints=True)
+        return PrefetchCapabilities(partial_swa_checkpoints=True, lookahead_hashes=True)
 
     @on_runtime
     def start_prefetch(
@@ -1491,7 +1499,9 @@ class KVTaskEngine(KVTaskManager):
                   cpu_only: bool = False,
                   task_id: int = -1,
                   namespace: Optional[List[str]] = None,
-                  swa_aware: bool = False) -> Tuple[int, np.ndarray]:
+                  swa_aware: bool = False,
+                  num_hash_lookahead_tokens: int = 0,
+                  ) -> Tuple[int, np.ndarray]:
         """Match a prefix and build the load graph; return (task_id, return_mask).
 
         With ``swa_aware=True`` the Full-KV transfer is clamped to the reusable
@@ -1520,6 +1530,7 @@ class KVTaskEngine(KVTaskManager):
                                                            cpu_only=cpu_only,
                                                            task_id=task_id,
                                                            namespace=namespace,
+                                                           num_hash_lookahead_tokens=num_hash_lookahead_tokens,
                                                            swa_aware=swa_aware)
         # trace get match request
         self.tracer.trace_request(
@@ -1542,7 +1553,9 @@ class KVTaskEngine(KVTaskManager):
                   cpu_only: bool = False,
                   task_id: int = -1,
                   namespace: Optional[List[str]] = None,
-                  swa_aware: bool = False) -> Tuple[int, np.ndarray]:
+                  swa_aware: bool = False,
+                  num_hash_lookahead_tokens: int = 0,
+                  ) -> Tuple[int, np.ndarray]:
         if token_mask is None:
             token_mask = np.ones_like(token_ids)
         if task_id == -1:
@@ -1559,6 +1572,7 @@ class KVTaskEngine(KVTaskManager):
                              is_fake_slot_mapping=is_fake_slot_mapping,
                              temp_cache_strategy=temp_cache_strategy,
                              namespace=namespace,
+                             num_hash_lookahead_tokens=num_hash_lookahead_tokens,
                              swa_aware=swa_aware)
         self._process_empty_graph(task_id)
         nvtx.pop_range()
@@ -1570,16 +1584,21 @@ class KVTaskEngine(KVTaskManager):
                   dp_client_id: int = 0,
                   token_mask: Optional[np.ndarray] = None,
                   task_id: int = -1,
-                  namespace: Optional[List[str]] = None) -> Tuple[int, np.ndarray]:
+                  namespace: Optional[List[str]] = None,
+                  num_hash_lookahead_tokens: int = 0,
+                  ) -> Tuple[int, np.ndarray]:
         self._update_tasks(timeout=0)
-        fake_slot_mapping = np.zeros_like(token_ids)
+        if token_mask is None:
+            token_mask = np.ones_like(token_ids, dtype=bool)
+        fake_slot_mapping = np.zeros_like(token_ids[token_mask])
         result_task_id, return_mask = self._put_match_impl(token_ids,
                                                            fake_slot_mapping,
                                                            is_fake_slot_mapping=True,
                                                            token_mask=token_mask,
                                                            dp_client_id=dp_client_id,
                                                            task_id=task_id,
-                                                           namespace=namespace)
+                                                           namespace=namespace,
+                                                           num_hash_lookahead_tokens=num_hash_lookahead_tokens)
         # trace put match request
         self.tracer.trace_request(
             request_type="PUT_MATCH",
@@ -1598,7 +1617,9 @@ class KVTaskEngine(KVTaskManager):
                         is_fake_slot_mapping: bool = False,
                         token_mask: Optional[np.ndarray] = None,
                         task_id: int = -1,
-                        namespace: Optional[List[str]] = None) -> Tuple[int, np.ndarray]:
+                        namespace: Optional[List[str]] = None,
+                        num_hash_lookahead_tokens: int = 0,
+                        ) -> Tuple[int, np.ndarray]:
         if token_mask is None:
             token_mask = np.ones_like(token_ids)
         if task_id == -1:
@@ -1610,7 +1631,8 @@ class KVTaskEngine(KVTaskManager):
                              dp_client_id=dp_client_id,
                              token_mask=token_mask,
                              is_fake_slot_mapping=is_fake_slot_mapping,
-                             namespace=namespace)
+                             namespace=namespace,
+                             num_hash_lookahead_tokens=num_hash_lookahead_tokens)
         self._process_empty_graph(task_id)
         nvtx.pop_range()
         return task_id, self.tasks[task_id].return_mask
@@ -1621,7 +1643,9 @@ class KVTaskEngine(KVTaskManager):
                        dp_client_id: int = 0,
                        task_id: int = -1,
                        namespace: Optional[List[str]] = None,
-                       swa_aware: bool = False) -> int:
+                       swa_aware: bool = False,
+                       num_hash_lookahead_tokens: int = 0,
+                       ) -> int:
         """Launch a prefetch task; return its task_id.
 
         The launch call is fire-and-forget: it publishes the plan and hands the
@@ -1639,7 +1663,8 @@ class KVTaskEngine(KVTaskManager):
             task_id = self._gen_task_id()
         nvtx.push_range(f"prefetch match: task_id={task_id}", color=get_nvtx_default_color())
         self.create_prefetch_task(
-            task_id, token_ids, dp_client_id=dp_client_id, namespace=namespace, swa_aware=swa_aware
+            task_id, token_ids, dp_client_id=dp_client_id, namespace=namespace,
+            num_hash_lookahead_tokens=num_hash_lookahead_tokens, swa_aware=swa_aware
         )
         self._process_empty_graph(task_id)
         nvtx.pop_range()

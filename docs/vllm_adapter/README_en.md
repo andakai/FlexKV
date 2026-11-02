@@ -172,6 +172,36 @@ bash benchmarks/flexkv_benchmark/multiturn_benchmark.sh
 ```
 Apply the patch `examples/vllm_adaption_legacy/flexkv_vllm_0_10_0.patch` to vLLM 0.10.0, and use the same testing method as above.
 
+### Lookahead hash protocol (development)
+
+The matching API accepts `num_hash_lookahead_tokens=H`. Token arrays retain the
+context through the last transferable block plus H tokens; the mask marks only
+KV positions for transfer. Hashes cover each prefix through its block end plus H,
+with a separate version/H/block-size domain. H=0 preserves legacy hashes.
+
+Both local and client/server matching carry H. A client rejects H>0 when the
+server's readiness response does not advertise `lookahead_hashes_v1`. Deploy the
+paired client and server before enabling lookahead in the vLLM connector.
+Legacy prefetch graphs are not inherited by lookahead GETs.
+
+Lookahead request namespaces include LoRA name/path and multimodal identifiers
+with their token offsets and lengths. Local LoRA integer IDs do not identify
+KV across processes. Field labels keep user salts and namespaces from aliasing
+LoRA identities. Lookup and store use the same namespace; prompt embeddings
+bypass external caching because their token IDs do not identify their contents.
+Both prefetch APIs accept H as well: `prefetch_async` takes it directly, while
+`start_prefetch` takes `PrefetchOptions(num_hash_lookahead_tokens=H)`. Legacy RPC
+prefetch requires `lookahead_prefetch_v1`; chunked prefetch reports
+`PrefetchCapabilities.lookahead_hashes`. Prefetch pins retain the hash context
+without counting it as loaded KV.
+
+The vLLM adapter also isolates model/draft/cache configurations and includes draft
+layers in the host allocation. Its initial lookahead path requires one resolved
+KV cache group and pipeline parallel size 1. Prompt-embedding requests bypass
+external reuse. Finish-time stores are bounded by completed tokens, available
+blocks and hash context. Full runtime qualification and the vLLM capability opt-in are
+still pending; this protocol addition alone is not a support declaration.
+
 ### Registered draft KV layers
 
 With pipeline parallel size one, FlexKV sizes host storage and transfers from

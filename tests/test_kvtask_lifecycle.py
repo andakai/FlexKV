@@ -1121,6 +1121,39 @@ def _tokens(base):
     return rs.randint(0, 30000, size=4 * TPB, dtype=np.int64)
 
 
+@pytest.mark.parametrize("lookahead", [1, 3, TPB + 1])
+def test_lookahead_get_put_preserves_hash_context_without_transferring_it(lookahead):
+    eng = _engine()
+    tokens = np.arange(2 * TPB + lookahead, dtype=np.int64)
+    slots = np.arange(2 * TPB, dtype=np.int64)
+    mask = np.zeros_like(tokens, dtype=bool)
+    mask[:2 * TPB] = True
+    _, returned, done, op_done, _ = eng.put(
+        1, tokens, mask.copy(), slots, dp_client_id=0,
+        num_hash_lookahead_tokens=lookahead,
+    )
+    assert returned.sum() == 2 * TPB
+    assert not returned[2 * TPB:].any()
+    for callback in op_done.values():
+        callback()
+    done()
+
+    for request_id, changed_index, expected in [(2, None, 2 * TPB),
+                                               (3, TPB + lookahead - 1, 0)]:
+        query = tokens.copy()
+        if changed_index is not None:
+            query[changed_index] += 1000
+        _, returned, done, op_done, _ = eng.get(
+            request_id, query, mask.copy(), slots, dp_client_id=0,
+            num_hash_lookahead_tokens=lookahead,
+        )
+        assert returned.sum() == expected
+        assert not returned[2 * TPB:].any()
+        for callback in op_done.values():
+            callback()
+        done()
+
+
 def _put(eng, tok):
     mask = np.ones_like(tok, dtype=np.int64)
     sm = np.arange(tok.shape[0], dtype=np.int64)

@@ -20,7 +20,8 @@ def _get_namespace_hash_key(namespace: Optional[List[str]]) -> Optional[np.ndarr
     return namespace_array
 
 
-def hash_token(token_ids: np.ndarray, namespace: Optional[List[str]]) -> HashType:
+def hash_token(token_ids: np.ndarray, namespace: Optional[List[str]],
+               num_hash_lookahead_tokens: int = 0) -> HashType:
     hasher = Hasher()
     hasher.reset()
 
@@ -29,6 +30,8 @@ def hash_token(token_ids: np.ndarray, namespace: Optional[List[str]]) -> HashTyp
         if namespace_key is not None:
             hasher.update(namespace_key)
 
+    if num_hash_lookahead_tokens:
+        hasher.update(np.array([-1, 1, num_hash_lookahead_tokens], dtype=np.int64))
     hasher.update(token_ids)
 
     return HashType(hasher.digest())
@@ -54,12 +57,16 @@ class SequenceMeta:
 
     namespace_id: Optional[int] = None
 
-    def __init__(self, token_ids: np.ndarray, tokens_per_block: int, namespace: Optional[List[str]] = None):
+    def __init__(self, token_ids: np.ndarray, tokens_per_block: int, namespace: Optional[List[str]] = None,
+                 num_hash_lookahead_tokens: int = 0):
         assert token_ids.ndim == 1
         assert tokens_per_block > 0
         
         self.token_ids = token_ids
         self.tokens_per_block = tokens_per_block
+        if num_hash_lookahead_tokens < 0:
+            raise ValueError("num_hash_lookahead_tokens must be nonnegative")
+        self.num_hash_lookahead_tokens = num_hash_lookahead_tokens
         self.namespace_id = None
         self.block_hashes = np.array([], dtype=np.int64)
         self._has_hashes = False
@@ -70,7 +77,7 @@ class SequenceMeta:
 
     @property
     def num_blocks(self) -> int:
-        return len(self.token_ids) // self.tokens_per_block
+        return max(0, len(self.token_ids) - self.num_hash_lookahead_tokens) // self.tokens_per_block
 
     @property
     def length(self) -> int:
@@ -102,7 +109,8 @@ class SequenceMeta:
 
         hasher = self._create_initialized_hasher()
 
-        self.block_hashes = gen_hashes(self.token_ids, self.tokens_per_block, hasher)
+        self.block_hashes = gen_hashes(self.token_ids, self.tokens_per_block, hasher,
+                                      self.num_hash_lookahead_tokens)
 
         assert self.block_hashes.ndim == 1
         assert self.block_hashes.size == self.num_blocks

@@ -32,6 +32,7 @@ class PrefetchContext:
     node: Any = None
     swa_node: Any = None
     swa_aware: bool = False
+    num_hash_lookahead_tokens: int = 0
     checkpoints: Tuple[int, ...] = ()
     reusable_end: int = 0
     pinned_bytes: int = 0
@@ -110,6 +111,7 @@ class MooncakeChunkPlanner:
             list(namespace) if namespace else None,
             client_id,
             swa_aware=options.swa_aware,
+            num_hash_lookahead_tokens=options.num_hash_lookahead_tokens,
         )
         context.future = self.executor.submit(self._query, context)
         return context
@@ -125,7 +127,8 @@ class MooncakeChunkPlanner:
 
         if context.cancel_query.is_set():
             return None, 0
-        sequence = SequenceMeta(context.tokens, self.block_size, context.namespace)
+        sequence = SequenceMeta(context.tokens, self.block_size, context.namespace,
+                                context.num_hash_lookahead_tokens)
         if self._query_client is None:
             config = MooncakeStoreConfig.from_file(
                 self.engine.cache_config, override_global_segment_size=0
@@ -193,7 +196,7 @@ class MooncakeChunkPlanner:
     ) -> bool:
         cpu = self.cache.cpu_cache_engine
         prefix = copy(context.sequence)
-        prefix.token_ids = prefix.token_ids[:end]
+        prefix.token_ids = prefix.token_ids[:end + prefix.num_hash_lookahead_tokens]
         prefix.block_hashes = prefix.block_hashes[: end // self.block_size]
         local = cpu.match(prefix)
         if int(local.num_matched_blocks) * self.block_size != end:

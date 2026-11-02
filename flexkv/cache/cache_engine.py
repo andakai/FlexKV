@@ -1173,9 +1173,11 @@ class GlobalCacheEngine:
             dp_client_id: int,
             temp_cache_strategy: CacheStrategy = DEFAULT_CACHE_STRATEGY,
             namespace: Optional[List[str]] = None,
-            swa_aware: bool = False) \
+            swa_aware: bool = False,
+            num_hash_lookahead_tokens: int = 0) \
                  -> Tuple[TransferOpGraph, np.ndarray, Callable, Dict, int]:
-        req = self._prepare_request(token_ids, token_mask, slot_mapping, namespace)
+        req = self._prepare_request(token_ids, token_mask, slot_mapping, namespace,
+                                    num_hash_lookahead_tokens)
         if req.block_end_idx == 0:
             transfer_graph = TransferOpGraph.create_empty_graph()
             return_mask = np.zeros_like(token_mask, dtype=np.bool_)
@@ -2152,9 +2154,11 @@ class GlobalCacheEngine:
             slot_mapping: np.ndarray,
             dp_client_id: int,
             temp_cache_strategy: CacheStrategy = DEFAULT_CACHE_STRATEGY,
-            namespace: Optional[List[str]] = None) \
+            namespace: Optional[List[str]] = None,
+            num_hash_lookahead_tokens: int = 0) \
                 -> Tuple[TransferOpGraph, np.ndarray, Callable, Dict, int]:
-        req = self._prepare_request(token_ids, token_mask, slot_mapping, namespace)
+        req = self._prepare_request(token_ids, token_mask, slot_mapping, namespace,
+                                    num_hash_lookahead_tokens)
         block_start_idx, block_end_idx = req.block_start_idx, req.block_end_idx
         # the mask should has a prefix of True
         assert block_start_idx == 0
@@ -3572,7 +3576,9 @@ class GlobalCacheEngine:
                          token_ids: np.ndarray,
                          token_mask: np.ndarray,
                          slot_mapping: np.ndarray,
-                         namespace: Optional[List[str]]) -> RequestWindow:
+                         namespace: Optional[List[str]],
+                         num_hash_lookahead_tokens: int = 0,
+                         ) -> RequestWindow:
         """Shared GET/PUT prologue.
 
         Validates the arrays, drops the trailing partial block (``token_mask``
@@ -3580,8 +3586,11 @@ class GlobalCacheEngine:
         block window. ``block_end_idx == 0`` means nothing is left to plan.
         """
         self._check_input(token_ids, token_mask, slot_mapping)
-        aligned_length = (token_ids.shape[0] // self.tokens_per_block) * self.tokens_per_block
-        aligned_token_ids = token_ids[:aligned_length]
+        if num_hash_lookahead_tokens < 0:
+            raise ValueError("num_hash_lookahead_tokens must be nonnegative")
+        kv_length = max(0, token_ids.shape[0] - num_hash_lookahead_tokens)
+        aligned_length = (kv_length // self.tokens_per_block) * self.tokens_per_block
+        aligned_token_ids = token_ids[:aligned_length + num_hash_lookahead_tokens]
         token_mask[aligned_length:] = False
         block_start_idx, block_end_idx = self._get_block_range(token_mask)
         # block_end_idx is the block just past the LAST True in token_mask. On the
@@ -3596,7 +3605,8 @@ class GlobalCacheEngine:
             slot_mapping, self.tokens_per_block)[:block_end_idx - block_start_idx]
         sequence_meta = SequenceMeta(token_ids=aligned_token_ids,
                                      tokens_per_block=self.cache_config.tokens_per_block,
-                                     namespace=namespace)
+                                     namespace=namespace,
+                                     num_hash_lookahead_tokens=num_hash_lookahead_tokens)
         return RequestWindow(block_start_idx, block_end_idx, gpu_block_ids, sequence_meta)
 
     def _check_input(self,

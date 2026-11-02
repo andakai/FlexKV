@@ -31,6 +31,33 @@ def test_gen_hashes_rejects_non_int64_tokens():
         gen_hashes(np.arange(2 * TPB, dtype=np.int32), TPB)
 
 
+@pytest.mark.parametrize("lookahead", [1, 3, TPB + 1])
+def test_lookahead_hashes_cover_context_without_counting_it_as_kv(lookahead):
+    from flexkv.common.block import SequenceMeta
+
+    tokens = np.arange(3 * TPB + lookahead, dtype=np.int64)
+    sequence = SequenceMeta(tokens, TPB, ["model"], lookahead)
+    assert sequence.num_blocks == 3
+    assert sequence.block_hashes.size == 3
+    changed = tokens.copy()
+    changed[TPB + lookahead - 1] += 1000
+    other = SequenceMeta(changed, TPB, ["model"], lookahead)
+    assert np.all(sequence.block_hashes != other.block_hashes)
+    changed = tokens.copy()
+    changed[TPB + lookahead] += 1000
+    other = SequenceMeta(changed, TPB, ["model"], lookahead)
+    assert sequence.get_hash(0) == other.get_hash(0)
+    assert np.all(sequence.block_hashes[1:] != other.block_hashes[1:])
+    assert SequenceMeta(tokens[:TPB + lookahead - 1], TPB,
+                        ["model"], lookahead).num_blocks == 0
+    # Truncating after the first block's context preserves its key.
+    assert SequenceMeta(tokens[:TPB + lookahead], TPB,
+                        ["model"], lookahead).get_hash(0) == sequence.get_hash(0)
+    legacy = SequenceMeta(tokens, TPB, ["model"])
+    assert sequence.get_hash(0) != legacy.get_hash(0)
+    assert sequence.get_hash(0) != SequenceMeta(tokens, TPB, ["other"], lookahead).get_hash(0)
+
+
 def test_gen_hashes_numpy_binding_checks_its_buffers():
     from flexkv import c_ext
     tokens = np.arange(2 * TPB, dtype=np.int64)

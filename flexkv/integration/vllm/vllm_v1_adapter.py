@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import threading
 import time
@@ -247,12 +249,16 @@ class FlexKVSchedulerConnector:
         flexkv_config: FlexKVConfig,
         rank_info: "RankInfo",
         enable_layerwise_transfer: Optional[bool] = None,
+        num_hash_lookahead_tokens: int = 0,
+        cache_namespace: Optional[str] = None,
     ):
         logger.info(f"Start init FlexKVSchedulerConnector with {flexkv_config}, {rank_info}")
         self.server_recv_port = flexkv_config.server_recv_port
         self.block_size = flexkv_config.cache_config.tokens_per_block
         self.cache_config = flexkv_config.cache_config
         self.rank_info = rank_info
+        self.num_hash_lookahead_tokens = num_hash_lookahead_tokens
+        self.cache_namespace = cache_namespace
 
         if os.getenv('DYNAMO_USE_FLEXKV', '0') == '1':
             self.collector = KVEventCollector()
@@ -386,18 +392,31 @@ class FlexKVSchedulerConnector:
         lora_req = getattr(request, 'lora_request', None)
         cache_salt = getattr(request, 'cache_salt', None)
         user_namespace = getattr(request, 'namespace_info', None)
-        if lora_req is None and cache_salt is None and user_namespace is None:
+        if (lora_req is None and cache_salt is None and user_namespace is None
+                and self.cache_namespace is None):
             return None
 
-        namespace_info: List[str] = []
+        namespace_info: List[str] = ([self.cache_namespace]
+                                     if self.cache_namespace is not None else [])
+        if self.num_hash_lookahead_tokens:
+            namespace_info.append(json.dumps(
+                [(feature.identifier, feature.mm_position.offset,
+                  feature.mm_position.length) for feature in request.mm_features]))
         if lora_req is not None:
             lora_id = lora_req.lora_name
             if lora_id is not None:
-                namespace_info.append(str(lora_id))
+                namespace_info.append(
+                    json.dumps(("lora", lora_id, lora_req.lora_path))
+                    if self.num_hash_lookahead_tokens else str(lora_id))
         if cache_salt is not None:
-            namespace_info.append(str(cache_salt))
+            namespace_info.append(
+                json.dumps(("cache_salt", str(cache_salt)))
+                if self.num_hash_lookahead_tokens else str(cache_salt))
         if user_namespace is not None:
-            if isinstance(user_namespace, list):
+            if self.num_hash_lookahead_tokens:
+                items = user_namespace if isinstance(user_namespace, list) else [user_namespace]
+                namespace_info.append(json.dumps(("user_namespace", [str(item) for item in items])))
+            elif isinstance(user_namespace, list):
                 namespace_info.extend(str(item) for item in user_namespace)
             else:
                 namespace_info.append(str(user_namespace))
@@ -420,25 +439,27 @@ class FlexKVSchedulerConnector:
                             the task_id and number of new matched tokens.
         """
         match_start_time = time.perf_counter()
-        num_tokens_to_get = (request.num_tokens//self.block_size)*self.block_size
-        token_ids = request.all_token_ids[:num_tokens_to_get]
+        lookahead = self.num_hash_lookahead_tokens
+        if lookahead and request.prompt_embeds is not None:
+            return -1, 0
+        reusable_tokens = max(0, request.num_tokens - lookahead)
+        num_tokens_to_get = (reusable_tokens // self.block_size) * self.block_size
+        token_ids = request.all_token_ids[:num_tokens_to_get + lookahead]
 
-        assert num_computed_tokens <= num_tokens_to_get, (
-            f"{num_computed_tokens=} must less equal to {num_tokens_to_get=}")
         assert num_computed_tokens % self.block_size == 0
 
-        if num_tokens_to_get == num_computed_tokens:
+        if num_tokens_to_get <= num_computed_tokens:
             return -1, 0
 
         np_token_ids = np.asarray(token_ids, dtype=np.int64)
-        np_token_mask = np.empty(num_tokens_to_get, dtype=bool)
-        np_token_mask[:num_computed_tokens] = False
-        np_token_mask[num_computed_tokens:] = True
+        np_token_mask = np.zeros(len(token_ids), dtype=bool)
+        np_token_mask[num_computed_tokens:num_tokens_to_get] = True
         namespace = self._extract_namespace(request)
         task_id, matched_mask = self.flexkv_manager.get_match(
             token_ids=np_token_ids,
             token_mask=np_token_mask,
             namespace=namespace,
+            num_hash_lookahead_tokens=self.num_hash_lookahead_tokens,
         )
         num_new_matched_tokens = int(np.count_nonzero(matched_mask))
 
@@ -561,8 +582,18 @@ class FlexKVSchedulerConnector:
         # waiting on a remote-KV load, so it is not a valid upper bound for a
         # GPU-to-host transfer.
         max_backed_tokens = len(block_ids) * self.block_size
+        if self.num_hash_lookahead_tokens:
+            in_flight_tokens = (
+                request.num_in_flight_tokens - request.num_stale_output_tokens
+            )
+            completed_tokens = max(0, request.num_computed_tokens - in_flight_tokens)
+            max_backed_tokens = min(
+                max_backed_tokens,
+                completed_tokens // self.block_size * self.block_size,
+            )
         num_tokens_to_put = min(
-            ((request.num_tokens - 1) // self.block_size) * self.block_size,
+            ((max(0, request.num_tokens - max(1, self.num_hash_lookahead_tokens)))
+             // self.block_size) * self.block_size,
             max_backed_tokens,
         )
         if num_tokens_to_put == 0:
@@ -626,16 +657,22 @@ class FlexKVSchedulerConnector:
                             the task_id, number of matched tokens and number of unmatched tokens.
         """
         match_start_time = time.perf_counter()
-        token_ids = request.all_token_ids[:num_tokens_to_put]
+        if self.num_hash_lookahead_tokens and request.prompt_embeds is not None:
+            return -1, 0, 0
+        token_ids = request.all_token_ids[:num_tokens_to_put + self.num_hash_lookahead_tokens]
 
         if num_tokens_to_put == 0:
             return -1, 0, 0
 
         np_token_ids = np.asarray(token_ids, dtype=np.int64)
         namespace = self._extract_namespace(request)
+        token_mask = np.zeros(len(token_ids), dtype=bool)
+        token_mask[:num_tokens_to_put] = True
         task_id, unmatched_mask = self.flexkv_manager.put_match(
             token_ids=np_token_ids,
+            token_mask=token_mask,
             namespace=namespace,
+            num_hash_lookahead_tokens=self.num_hash_lookahead_tokens,
         )
 
         num_unmatched_tokens = int(np.count_nonzero(unmatched_mask))
@@ -1232,9 +1269,27 @@ class FlexKVWorkerConnector:
             self.remote_transfer_manager_process = None
 
 class FlexKVConnectorV1Impl:
+    LOOKAHEAD_HASHES_VERSION = 1
+
     def __init__(self, vllm_config: "VllmConfig", role: "KVConnectorRole",
                  kv_cache_config: Optional["KVCacheConfig"] = None):
         self.role = role
+        lookahead = getattr(vllm_config, "num_hash_lookahead_tokens", 0)
+        cache_namespace = None
+        if lookahead:
+            if kv_cache_config is None or len(kv_cache_config.kv_cache_groups) != 1:
+                raise ValueError("FlexKV lookahead requires one resolved KV cache group")
+            if vllm_config.parallel_config.pipeline_parallel_size != 1:
+                raise NotImplementedError("FlexKV lookahead currently requires pipeline_parallel_size=1")
+            spec = vllm_config.speculative_config
+            cache_namespace = hashlib.sha256(json.dumps([
+                "flexkv-lookahead-v1", lookahead,
+                vllm_config.model_config.compute_hash(),
+                spec.compute_hash(),
+                vllm_config.cache_config.compute_hash(),
+                vllm_config.parallel_config.compute_hash(),
+                repr(kv_cache_config.kv_cache_groups),
+            ]).encode()).hexdigest()
         flexkv_config = FlexKVConfig.from_env()
         rank_info = flexkv_config.post_init_from_vllm_config(
             vllm_config, kv_cache_config)
@@ -1286,7 +1341,8 @@ class FlexKVConnectorV1Impl:
 
         if role == KVConnectorRole.SCHEDULER:
             self.connector = FlexKVSchedulerConnector(
-                flexkv_config, rank_info, self.enable_layerwise_transfer)
+                flexkv_config, rank_info, self.enable_layerwise_transfer,
+                lookahead, cache_namespace)
             # Track scheduled requests to detect preemptions in build_connector_meta
             self.previous_scheduled_req_ids: set[str] = set()
         elif role == KVConnectorRole.WORKER:
