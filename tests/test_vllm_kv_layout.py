@@ -131,3 +131,23 @@ def test_resolved_specs_reject_mixed_rank_sharing(config, cache_specs):
 
     with pytest.raises(ValueError, match="requires one uniform vLLM attention storage layout"):
         config._configure_kv_layout_from_vllm_cache_config(kv_cache_config)
+
+
+@pytest.mark.parametrize("draft_layers", [0, 1, 2])
+def test_resolved_layers_size_host_storage_without_hash_lookahead(draft_layers):
+    from vllm.config import CacheConfig, ModelConfig, VllmConfig
+    from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheConfig, KVCacheGroupSpec
+
+    model = ModelConfig(model="facebook/opt-125m", dtype="float16")
+    config = VllmConfig(model_config=model, cache_config=CacheConfig(block_size=16))
+    assert config.num_hash_lookahead_tokens == 0
+    target_layers = model.get_num_layers(config.parallel_config)
+    names = [f"model.layers.{i}.attn" for i in range(target_layers)]
+    names += [f"draft.layers.{i}.attn" for i in range(draft_layers)]
+    spec = FullAttentionSpec(block_size=16, num_kv_heads=1, head_size=64, dtype=torch.float16)
+    kv_config = KVCacheConfig(num_blocks=32, kv_cache_tensors=[],
+                             kv_cache_groups=[KVCacheGroupSpec(names, spec)])
+    flex_config = FlexKVConfig()
+    rank = flex_config.post_init_from_vllm_config(config, kv_config)
+    assert flex_config.model_config.num_layers == target_layers + draft_layers
+    assert rank.pp_end_layer == target_layers + draft_layers

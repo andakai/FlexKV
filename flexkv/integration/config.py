@@ -302,9 +302,8 @@ class FlexKVConfig:
         self.cache_config.tokens_per_block = vllm_config.cache_config.block_size
 
         self.model_config.num_layers = vllm_config.model_config.get_num_layers(vllm_config.parallel_config)
-        if getattr(vllm_config, "num_hash_lookahead_tokens", 0):
-            # Include registered draft KV layers in both host allocation and transfer.
-            assert kv_cache_config is not None
+        if kv_cache_config is not None and parallel_config.pipeline_parallel_size == 1:
+            # Resolved groups include registered draft KV layers as well as target KV.
             self.model_config.num_layers = sum(
                 ".k_cache" not in name
                 for group in kv_cache_config.kv_cache_groups

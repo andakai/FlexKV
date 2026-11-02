@@ -201,3 +201,10 @@ KV cache group and pipeline parallel size 1. Prompt-embedding requests bypass
 external reuse. Finish-time stores are bounded by completed tokens, available
 blocks and hash context. Full runtime qualification and the vLLM capability opt-in are
 still pending; this protocol addition alone is not a support declaration.
+
+### Registered draft KV layers
+
+With pipeline parallel size one, FlexKV sizes host storage and transfers from
+the resolved vLLM KV layer list, including draft layers. This is independent of
+the block-hash policy; legacy hashing must not truncate the layer dimension to
+the target model alone. Pipeline-parallel layer accounting is unchanged.
