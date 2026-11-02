@@ -171,3 +171,10 @@ bash benchmarks/flexkv_benchmark/serving_vllm.sh
 bash benchmarks/flexkv_benchmark/multiturn_benchmark.sh
 ```
 Apply the patch `examples/vllm_adaption_legacy/flexkv_vllm_0_10_0.patch` to vLLM 0.10.0, and use the same testing method as above.
+
+### Registered draft KV layers
+
+With pipeline parallel size one, FlexKV sizes host storage and transfers from
+the resolved vLLM KV layer list, including draft layers. This is independent of
+the block-hash policy; legacy hashing must not truncate the layer dimension to
+the target model alone. Pipeline-parallel layer accounting is unchanged.
