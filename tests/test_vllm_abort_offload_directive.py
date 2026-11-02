@@ -130,12 +130,15 @@ def test_lookahead_lookup_and_store_isolate_lora_and_mm_positions():
     connector.flexkv_manager.get_match.return_value = (-1, np.zeros(33, dtype=bool))
     connector.flexkv_manager.put_match.return_value = (-1, np.zeros(33, dtype=bool))
     keys = []
-    for path, local_id, offset, length in [
-        ("adapter-a", 1, 0, 4),
-        ("adapter-b", 1, 0, 4),
-        ("adapter-a", 2, 0, 4),
-        ("adapter-a", 1, 4, 4),
-        ("adapter-a", 1, 0, 8),
+    for path, local_id, offset, length, salt, user_namespace in [
+        ("adapter-a", 1, 0, 4, None, None),
+        ("adapter-b", 1, 0, 4, None, None),
+        ("adapter-a", 2, 0, 4, None, None),
+        ("adapter-a", 1, 4, 4, None, None),
+        ("adapter-a", 1, 0, 8, None, None),
+        (None, 0, 0, 4, '["adapter", "adapter-a"]', None),
+        (None, 0, 0, 4, '["lora", "adapter", "adapter-a"]', None),
+        (None, 0, 0, 4, None, ['["lora", "adapter", "adapter-a"]']),
     ]:
         request = _request(FinishReason.STOP, offload=False)
         request.num_tokens = 33
@@ -143,8 +146,11 @@ def test_lookahead_lookup_and_store_isolate_lora_and_mm_positions():
         request.num_in_flight_tokens = request.num_stale_output_tokens = 0
         request.all_token_ids = list(range(33))
         request.prompt_embeds = None
-        request.lora_request = SimpleNamespace(
+        request.lora_request = (SimpleNamespace(
             lora_name="adapter", lora_path=path, lora_int_id=local_id)
+            if path is not None else None)
+        request.cache_salt = salt
+        request.namespace_info = user_namespace
         request.mm_features = [SimpleNamespace(
             identifier="image-a",
             mm_position=SimpleNamespace(offset=offset, length=length))]
@@ -160,4 +166,4 @@ def test_lookahead_lookup_and_store_isolate_lora_and_mm_positions():
             namespace=store["namespace"], num_hash_lookahead_tokens=1,
         ).block_hashes))
     assert keys[0] == keys[2]
-    assert len(set(keys)) == 4
+    assert len(set(keys)) == 7
