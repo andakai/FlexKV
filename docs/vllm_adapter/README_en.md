@@ -183,6 +183,11 @@ Both local and client/server matching carry H. A client rejects H>0 when the
 server's readiness response does not advertise `lookahead_hashes_v1`. Deploy the
 paired client and server before enabling lookahead in the vLLM connector.
 Legacy prefetch graphs are not inherited by lookahead GETs.
+
+Lookahead request namespaces include LoRA name/path and multimodal identifiers
+with their token offsets and lengths. Local LoRA integer IDs do not identify
+KV across processes. Lookup and store use the same namespace; prompt embeddings
+bypass external caching because their token IDs do not identify their contents.
 Both prefetch APIs accept H as well: `prefetch_async` takes it directly, while
 `start_prefetch` takes `PrefetchOptions(num_hash_lookahead_tokens=H)`. Legacy RPC
 prefetch requires `lookahead_prefetch_v1`; chunked prefetch reports

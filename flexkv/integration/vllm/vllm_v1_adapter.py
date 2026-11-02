@@ -400,11 +400,14 @@ class FlexKVSchedulerConnector:
                                      if self.cache_namespace is not None else [])
         if self.num_hash_lookahead_tokens:
             namespace_info.append(json.dumps(
-                [feature.identifier for feature in request.mm_features]))
+                [(feature.identifier, feature.mm_position.offset,
+                  feature.mm_position.length) for feature in request.mm_features]))
         if lora_req is not None:
             lora_id = lora_req.lora_name
             if lora_id is not None:
-                namespace_info.append(str(lora_id))
+                namespace_info.append(
+                    json.dumps((lora_id, lora_req.lora_path))
+                    if self.num_hash_lookahead_tokens else str(lora_id))
         if cache_salt is not None:
             namespace_info.append(str(cache_salt))
         if user_namespace is not None:
