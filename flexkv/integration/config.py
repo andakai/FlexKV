@@ -302,6 +302,13 @@ class FlexKVConfig:
         self.cache_config.tokens_per_block = vllm_config.cache_config.block_size
 
         self.model_config.num_layers = vllm_config.model_config.get_num_layers(vllm_config.parallel_config)
+        if kv_cache_config is not None and parallel_config.pipeline_parallel_size == 1:
+            # Resolved groups include registered draft KV layers as well as target KV.
+            self.model_config.num_layers = sum(
+                ".k_cache" not in name
+                for group in kv_cache_config.kv_cache_groups
+                for name in group.layer_names
+            )
         vllm_kv_cache_dtype = getattr(vllm_config.cache_config, 'cache_dtype', 'auto')
         self._resolve_dtype(
             framework_dtype_str=vllm_kv_cache_dtype if isinstance(vllm_kv_cache_dtype, str) else None,
